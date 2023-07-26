@@ -102,10 +102,29 @@ Proof.
   { nia. }
 Qed.
 
-(* Wrapper for `mult_half_words` *)
-(* Lemma mult_half_words' *)
+(* Alternate expression of `mult_half_words`? TODO: needs lower bounds
+ * on a and b as parameters. *)
+Lemma mult_half_words' 
+  (m := 2^32)
+  (M := m * m) 
+  (a b : Z)
+  (alow := a mod m) 
+  (ahi := a / m)
+  (blow := b mod m)
+  (bhi := a / m)
+  (ll := alow * blow)
+  (hl := ahi * blow)
+  (lh := alow * bhi)
+  (hh := ahi * bhi)
+  (tm := (ll / m) + (hl mod m) + lh) :
+  a * b =
+    ((tm * m mod M) + (ll mod m))
+    + M * ((hl / m) + (tm / m) + hh).
+Proof.
+Admitted.
 
 Lemma mulhuu_ok : program_logic_goal_for_function! mulhuu.
 Proof.
   repeat straightline.
+  rewrite (mult_half_words' (word.unsigned a) (word.unsigned b)).
   Admitted.

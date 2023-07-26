@@ -38,6 +38,7 @@ Require Import bedrock2.Logging.
 Require Import LiveVerif.LiveRules.
 Require Import LiveVerif.PackageContext.
 Require Import LiveVerif.LiveSnippet.
+Require Import bedrock2.LogSidecond.
 
 Definition functions_correct
   (* universally quantified abstract function list containing all functions: *)
@@ -109,9 +110,28 @@ Ltac print_stats f := f ltac_identity.
 Ltac don't_print_stats f := idtac.
 
 (* use ::= to set _stats to print_stats or don't_print_stats *)
-Ltac _stats := print_stats.
+Ltac _stats := don't_print_stats.
 
 Tactic Notation "stats" tactic0(f) := _stats f.
+
+#[export] Hint Extern 1 (SidecondIrrelevant (with_mem _ _)) =>
+  constructor : typeclass_instances.
+#[export] Hint Extern 1 (SidecondIrrelevant (scope_marker _)) =>
+  constructor : typeclass_instances.
+#[export] Hint Extern 1 (SidecondIrrelevant (currently _)) =>
+  constructor : typeclass_instances.
+#[export] Hint Extern 1 (SidecondIrrelevant (ext_spec.ok _)) =>
+  constructor : typeclass_instances.
+#[export] Hint Extern 1 (SidecondIrrelevant (DisjointUnion.mmap.du _ _ = _)) =>
+  constructor : typeclass_instances.
+#[export] Hint Extern 1 (SidecondIrrelevant (functions_correct _ _)) =>
+  constructor : typeclass_instances.
+#[export] Hint Extern 1 (SidecondIrrelevant (merge_step _)) =>
+  constructor : typeclass_instances.
+#[export] Hint Extern 1 (SidecondIrrelevant (fold_step _)) =>
+  constructor : typeclass_instances.
+
+Ltac pre_log_simpl_hook ::= unzify.
 
 Ltac start :=
   lazymatch goal with
@@ -422,25 +442,51 @@ Ltac LoopInvOrPreOrPost_above i :=
 Tactic Notation "loop" "invariant" "above" ident(i) := LoopInvOrPreOrPost_above i.
 Tactic Notation "loop" "pre" "above" ident(i) := LoopInvOrPreOrPost_above i.
 
+Ltac pair_destructuring_intros_step :=
+  lazymatch goal with
+  | |- forall (_: _ * _), _ =>
+      (* doesn't really do any intro, but does one step of splitting, leaving
+         both sides of the * up for further splitting *)
+      let x := fresh in intro x; case x; clear x
+  | |- forall _, _ => intro
+  end.
+
+Ltac fix_local_names ksvs :=
+  lazymatch ksvs with
+  | cons (?s, ?v) ?rest =>
+      let i := string_to_ident s in
+      (tryif constr_eq i v then
+          idtac (* nothing to do for v *)
+        else
+          (make_fresh i; rename v into i));
+      fix_local_names rest
+  | nil => idtac
+  end.
+
+Ltac start_loop_body :=
+  repeat match goal with
+    | H: sep _ _ ?M |- _ => clear M H
+    end;
+  clear_until_LoopInvOrPreOrPost_marker;
+  (* Note: will also appear after loop, where we'll have to clear it,
+     but we have to pose it here because the foralls are shared between
+     loop body and after the loop *)
+  (let n := fresh "Scope0" in pose proof (mk_scope_marker LoopBody) as n);
+  cbv beta;
+  repeat pair_destructuring_intros_step;
+  unpackage_context;
+  lazymatch goal with
+  | |- exists b, dexpr_bool3 _ (map.of_list ?ksvs) _ b _ _ _ =>
+      fix_local_names ksvs;
+      eexists
+  | |- _ => fail "assertion failure: hypothesis of wp_while has unexpected shape"
+  end.
+
 Ltac while cond measure0 :=
   eapply (wp_while measure0 cond);
   [ package_heapletwise_context
   | eauto with wf_of_type
-  | repeat match goal with
-      | H: sep _ _ ?M |- _ => clear M H
-      end;
-    clear_until_LoopInvOrPreOrPost_marker;
-    (* Note: will also appear after loop, where we'll have to clear it,
-       but we have to pose it here because the foralls are shared between
-       loop body and after the loop *)
-    (let n := fresh "Scope0" in pose proof (mk_scope_marker LoopBody) as n);
-    cbv beta;
-    intros;
-    unpackage_context;
-    lazymatch goal with
-    | |- exists b, dexpr_bool3 _ _ _ b _ _ _ => eexists
-    | |- _ => fail "assertion failure: hypothesis of wp_while has unexpected shape"
-    end ].
+  | start_loop_body ].
 
 Ltac is_local_var name :=
   lazymatch goal with
@@ -799,12 +845,12 @@ Ltac final_program_logic_step logger :=
         logger ltac:(fun _ => idtac "eexists")
       | (* tried first because it also solves some goals of shape (_ = _) and (_ /\ _) *)
         zify_goal; xlia zchecker;
-        logger ltac:(fun _ => idtac "xlia zchecker")
+        logger ltac:(fun _ => idtac "zify_goal; xlia zchecker")
       | safe_implication_step;
         logger ltac:(fun _ => idtac "safe_implication_step")
       | lazymatch goal with
         | H: _ \/ _ |- _ =>
-            destruct H; try (exfalso; congruence);
+            destruct H as [H | H]; try (exfalso; congruence);
             [ logger ltac:(fun _ => idtac "discarding contradictory branch of \/ in" H) ]
         end
       | lazymatch goal with
@@ -1020,6 +1066,23 @@ Notation "'uintptr_t' fname ( 'uintptr_t' a1 , 'uintptr_t' .. , 'uintptr_t' an )
  post constr at level 200,
  only parsing).
 
+(* One return value and no arguments: *)
+Notation "'uintptr_t' fname ( ) /* *# 'ghost_args' := g1 .. gn ; 'requires' t1 m1 := pre ; 'ensures' t2 m2 r := post #* */ /* *" :=
+  (fun fname: String.string =>
+     (fun fs =>
+        (forall g1, .. (forall gn,
+           (forall t1 m1, pre ->
+              WeakestPrecondition.call fs fname t1 m1 nil
+                (fun t2 m2 retvs => exists r, retvs = cons r nil /\ post))) .. ))
+     : ProgramLogic.spec_of fname)
+(in custom funspec at level 1,
+ fname name,
+ g1 closed binder, gn closed binder,
+ t1 name, t2 name, m1 name, m2 name, r name,
+ pre constr at level 200,
+ post constr at level 200,
+ only parsing).
+
 (* No return value: *)
 Notation "'void' fname ( 'uintptr_t' a1 , 'uintptr_t' .. , 'uintptr_t' an ) /* *# 'ghost_args' := g1 .. gn ; 'requires' t1 m1 := pre ; 'ensures' t2 m2 := post #* */ /* *" :=
   (fun fname: String.string =>
@@ -1033,6 +1096,23 @@ Notation "'void' fname ( 'uintptr_t' a1 , 'uintptr_t' .. , 'uintptr_t' an ) /* *
 (in custom funspec at level 1,
  fname name,
  a1 closed binder, an closed binder,
+ g1 closed binder, gn closed binder,
+ t1 name, t2 name, m1 name, m2 name,
+ pre constr at level 200,
+ post constr at level 200,
+ only parsing).
+
+(* No return value an no arguments: *)
+Notation "'void' fname ( ) /* *# 'ghost_args' := g1 .. gn ; 'requires' t1 m1 := pre ; 'ensures' t2 m2 := post #* */ /* *" :=
+  (fun fname: String.string =>
+     (fun fs =>
+        (forall g1, .. (forall gn,
+           (forall t1 m1, pre ->
+              WeakestPrecondition.call fs fname t1 m1 nil
+                (fun t2 m2 retvs => retvs = nil /\ post))) .. ))
+     : ProgramLogic.spec_of fname)
+(in custom funspec at level 1,
+ fname name,
  g1 closed binder, gn closed binder,
  t1 name, t2 name, m1 name, m2 name,
  pre constr at level 200,

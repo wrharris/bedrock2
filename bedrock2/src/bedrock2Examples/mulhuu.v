@@ -16,8 +16,80 @@ Local Open Scope list_scope.
 Local Notation "x += e" := (cmd.set (ident_to_string! x) (expr.op bopname.add (ident_to_string! x) e)) (in custom bedrock_cmd at level 0, x ident, e custom bedrock_expr, only parsing).
 
 (* Return the high word of the integer multiplication a * b. *)
+Definition secp256k1_umul128 :=
+  func! (a, b) ~> (hi, low) {
+  (* func! (a, b) ~> (hi, low) { *)
+      M = $1 << $32 - $1;
+      (* Casts to (uint32_t) in secp are implemented in bedrock2 using
+       * word.and. *)
+      ll = (a & M) * (b & M);
+      lh = (a & M) * (b >> $32);
+      hl = (a >> $32) * (b & M);
+      hh = (a >> $32) * (b >> $32);
+      mid34 = (ll >> $32) + (lh & M) + (hl & M);
+      hi = hh + (lh >> $32) + (hl >> $32) + (mid34 >> $32);
+      low = (mid34 << $32) + (ll & M)
+    }.
+
+Local Instance spec_of_secp256k1 : spec_of "secp256k1_umul128" :=
+  fnspec! "secp256k1_umul128" a b ~> hi low,
+    { requires t m := True;
+      ensures T M :=
+        M = m /\ T = t /\
+          word.unsigned low + Z.shiftl (word.unsigned hi) 64 =
+            (word.unsigned a) * (word.unsigned b)
+    }.
+
+Lemma mask_is_mod :
+  forall a : BasicC64Semantics.word,
+    word.unsigned
+      (word.and
+         a
+         (word.sub (word.slu (word.of_Z 1) (word.of_Z 32)) (word.of_Z 1))) =
+      (word.unsigned a) mod 2^32.
+Proof.
+  Admitted.
+
+Lemma mul32_ub :
+  forall a b : BasicC64Semantics.word,
+    (word.unsigned a) < 2^32 ->
+    (word.unsigned b) < 2^32 ->
+    word.unsigned (word.mul a b) < 2^64 - 2^33.
+Proof.
+  Admitted.
+
+(* This seems import but isn't deduced by ZnWords. *)
+Lemma mul_half_words :
+  forall a b : BasicC64Semantics.word,
+    word.unsigned a < 2^32 -> word.unsigned b < 2^32 ->
+    word.unsigned (word.mul a b) = word.unsigned a * word.unsigned b.
+Proof.
+  intros.
+  Fail ZnWords.
+  Admitted.
+
+Lemma secp256k1_umul128_ok : program_logic_goal_for_function! secp256k1_umul128.
+Proof.
+  repeat straightline.
+  (* TODO: clean up with repeated matching *)
+  specialize (mask_is_mod a).
+  specialize (mask_is_mod b).
+  specialize (mask_is_mod ll).
+  specialize (mask_is_mod lh).
+  specialize (mask_is_mod hl).
+  specialize (mul_half_words (word.and a M) (word.and b M)).
+  specialize (mul_half_words (word.and a M) (word.sru b (word.of_Z 32))).
+  specialize (mul_half_words (word.sru a (word.of_Z 32)) (word.and b M)).
+  specialize
+    (mul_half_words (word.sru a (word.of_Z 32)) (word.sru b (word.of_Z 32))).
+  specialize
+    (mul32_ub (word.sru a (word.of_Z 32)) (word.sru b (word.of_Z 32))). 
+  ZnWords.
+Qed.
+
+(* Return the high word of the integer multiplication a * b. *)
 Definition mulhuu :=
-  func! (a, b) ~> (r2W, r0) {
+  func! (a, b) ~> (hi, low) {
       W = $32;
       M = $1 << W - $1;
       lh = (a & M) * (b >> W);
@@ -29,20 +101,20 @@ Definition mulhuu :=
       c3W = sW < lh;
       r2W += c3W << W;
       r2W += sW >> W;
-      r0 = (a & M) * (b & M);
+      low = (a & M) * (b & M);
       s0 = r0 + (sW << W);
       c2W = s0 < r0;
-      r2W += c2W
+      hi += c2W
     }.
 
 (* mulhuu's functional spec, as commented above. Memory and trace are
    unchanged. *)
 Local Instance spec_of_mulhuu : spec_of "mulhuu" :=
-  fnspec! "mulhuu" a b ~> r2W r0,
+  fnspec! "mulhuu" a b ~> hi low,
     { requires t m := True;
       ensures T M :=
         M = m /\ T = t /\
-          2^64 * word.unsigned r2W + word.unsigned r0 =
+          2^64 * word.unsigned hi + word.unsigned low =
             (word.unsigned a * word.unsigned b)
     }.
 
@@ -123,8 +195,17 @@ Lemma mult_half_words'
 Proof.
 Admitted.
 
+Lemma ltu_as_carry (a b : BasicC64Semantics.word)
+  : word.unsigned ((if word.ltu (word.add a b) a then word.of_Z 1 else word.of_Z 0) : BasicC64Semantics.word) =
+      (word.unsigned a + word.unsigned b) /  2 ^ 64.
+Proof.
+  Admitted.
+
 Lemma mulhuu_ok : program_logic_goal_for_function! mulhuu.
 Proof.
   repeat straightline.
   rewrite (mult_half_words' (word.unsigned a) (word.unsigned b)).
-  Admitted.
+  specialize (ltu_as_carry lh hl).
+  specialize (ltu_as_carry r0 (word.slu sW W)).
+  (* Fails to find witness. *)
+  ZnWords.

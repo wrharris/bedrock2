@@ -1,6 +1,11 @@
+From bedrock2 Require Import WeakestPrecondition ProgramLogic BasicC64Semantics.
 Require Import bedrock2.NotationsCustomEntry.
-
+Require Import ZArith.
+Require Import coqutil.Tactics.Tactics.
+Require Import bedrock2.ZnWords.
 Import Syntax BinInt String List.ListNotations.
+Import coqutil.Word.Interface.
+
 Local Open Scope string_scope.
 Local Open Scope Z_scope.
 Local Open Scope list_scope.
@@ -13,9 +18,6 @@ Definition add_with_carry :=
       carry_out = carry_out + (sum < y)
     }.
 
-From bedrock2 Require Import WeakestPrecondition ProgramLogic BasicC64Semantics.
-Import coqutil.Word.Interface.
-Require Import bedrock2.ZnWords.
 
 Local Instance spec_of_add_with_carry : spec_of "add_with_carry" :=
   fnspec! "add_with_carry" x y carry ~> sum carry_out,
@@ -30,8 +32,7 @@ Local Instance spec_of_add_with_carry : spec_of "add_with_carry" :=
             word.unsigned x + word.unsigned carry + word.unsigned y
     }.
 
-Require Import coqutil.Tactics.Tactics.
-
+(* DEPRECATED *)
 Lemma add_ltu_as_adder : forall a b : BasicC64Semantics.word,
     word.unsigned a + word.unsigned b =
       2^64 * (if word.ltu (word.add a b) b then 1 else 0) +
@@ -43,19 +44,22 @@ Proof.
     ZnWords.
 Qed.
 
-Require Import ZArith.
+Lemma ltu_as_carry64 (a b : BasicC64Semantics.word)
+  : word.unsigned
+      ((if word.ltu (word.add a b) b then word.of_Z 1 else word.of_Z 0) :
+        BasicC64Semantics.word) =
+      (word.unsigned a + word.unsigned b) /  2 ^ 64.
+Proof.
+  rewrite word.unsigned_ltu.
+  destr (word.unsigned (word.add a b) <? word.unsigned b);
+    ZnWords.
+Qed.
 
 Lemma full_adder_ok : program_logic_goal_for_function! add_with_carry.
 Proof.
-  repeat straightline. 
-  
-  rewrite add_ltu_as_adder.
-  rewrite <- Z.add_assoc.
-  rewrite add_ltu_as_adder.
-  repeat
-    (match goal with
-     | X := _ |- _  => subst X end).
-  destruct (word.ltu (word.add x'0 carry) carry);
-    destruct (word.ltu (word.add (word.add x'0 carry) y) y);
-    ZnWords.
+  repeat straightline.
+  (* TODO(wrharris): automate this using pattern matching? *)
+  specialize (ltu_as_carry64 x y).
+  specialize (ltu_as_carry64 x'0 carry).
+  ZnWords.
 Qed.

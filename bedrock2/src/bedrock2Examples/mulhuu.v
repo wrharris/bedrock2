@@ -54,11 +54,10 @@ Lemma mul32_ub :
   forall a b : BasicC64Semantics.word,
     (word.unsigned a) < 2^32 ->
     (word.unsigned b) < 2^32 ->
-    word.unsigned (word.mul a b) < 2^64 - 2^33.
+    word.unsigned (word.mul a b) < 2^64 - 2^33 + 2.
 Proof.
   Admitted.
 
-(* This seems import but isn't deduced by ZnWords. *)
 Lemma mul_half_words :
   forall a b : BasicC64Semantics.word,
     word.unsigned a < 2^32 -> word.unsigned b < 2^32 ->
@@ -83,7 +82,11 @@ Proof.
   specialize
     (mul_half_words (word.sru a (word.of_Z 32)) (word.sru b (word.of_Z 32))).
   specialize
-    (mul32_ub (word.sru a (word.of_Z 32)) (word.sru b (word.of_Z 32))). 
+    (mul32_ub (word.and a M) (word.sru b (word.of_Z 32))).
+  specialize
+    (mul32_ub (word.sru a (word.of_Z 32)) (word.and b M)).
+  specialize
+    (mul32_ub (word.sru a (word.of_Z 32)) (word.sru b (word.of_Z 32))).
   ZnWords.
 Qed.
 

@@ -46,8 +46,10 @@ Lemma mask_is_mod :
       (word.and
          a
          (word.sub (word.slu (word.of_Z 1) (word.of_Z 32)) (word.of_Z 1))) =
-      (word.unsigned a) mod 2^32.
+      (word.unsigned a) mod (2^32).
 Proof.
+  intros.
+  Fail ZnWords.
   Admitted.
 
 Lemma mul32_ub :
@@ -56,6 +58,8 @@ Lemma mul32_ub :
     (word.unsigned b) < 2^32 ->
     word.unsigned (word.mul a b) < 2^64 - 2^33 + 2.
 Proof.
+  intros.
+  Fail ZnWords.
   Admitted.
 
 Lemma mul_half_words :

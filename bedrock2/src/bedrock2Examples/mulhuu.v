@@ -7,7 +7,7 @@ Require Import bedrock2.ZnWords.
 Require Import Lia ZArith.
 
 Import Syntax BinInt String List.ListNotations.
-Import coqutil.Word.Interface.
+Import coqutil.Word.Interface coqutil.Word.Properties.
 
 Local Open Scope string_scope.
 Local Open Scope Z_scope.
@@ -54,8 +54,22 @@ Lemma mask_is_mod :
       (word.unsigned a) mod (2^32).
 Proof.
   intros.
+  erewrite <- Z.land_ones; try lia.
+  specialize
+    (word.unsigned_and_nowrap
+       a (word.sub (word.slu (word.of_Z 1) (word.of_Z 32)) (word.of_Z 1)) ).
   Fail ZnWords.
-  Admitted.
+  assert 
+    (word.unsigned
+      (word.sub
+         (word.slu
+            (word.of_Z 1 : BasicC64Semantics.word) (word.of_Z 32))
+         (word.of_Z 1)) =
+       (Z.ones 32)) by trivial.
+  Fail ZnWords.
+  rewrite H; clear H.
+  trivial.
+Qed.
 
 Lemma mul32_ub :
   forall a b : BasicC64Semantics.word,
@@ -64,7 +78,15 @@ Lemma mul32_ub :
     word.unsigned (word.mul a b) < 2^64 - 2^33 + 2.
 Proof.
   intros.
-  Fail ZnWords.
+  specialize (word.unsigned_range a).
+  specialize (word.unsigned_range b).
+  intros.
+  rewrite word.unsigned_mul.
+  (* TODO(harrisw): this may be proved by applying something like *
+  `Z.mul_lt_mono_r`. Suspect that this is in some library like
+  Coq.ZArith.ZArith, but can't confirm because Coq refs are
+  offline. *)
+  Fail nia.
   Admitted.
 
 Lemma mul_half_words :
@@ -96,7 +118,7 @@ Proof.
     (mul32_ub (word.sru a (word.of_Z 32)) (word.and b M)).
   specialize
     (mul32_ub (word.sru a (word.of_Z 32)) (word.sru b (word.of_Z 32))).
-  ZnWords.
+  Time ZnWords.
 Qed.
 
 (* Return the high word of the integer multiplication a * b. *)

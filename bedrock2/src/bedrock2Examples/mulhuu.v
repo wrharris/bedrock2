@@ -6,6 +6,9 @@ From bedrock2 Require Import WeakestPrecondition ProgramLogic BasicC64Semantics.
 Require Import bedrock2.ZnWords.
 Require Import Lia ZArith.
 
+Require Import coqutil.Macros.unique.
+Require Import coqutil.Tactics.Tactics.
+
 Import Syntax BinInt String List.ListNotations.
 Import coqutil.Word.Interface coqutil.Word.Properties.
 
@@ -54,21 +57,21 @@ Lemma mask_is_mod :
       (word.unsigned a) mod (2^32).
 Proof.
   intros.
-  erewrite <- Z.land_ones; try lia.
+  rewrite <- Z.land_ones by lia.
   specialize
     (word.unsigned_and_nowrap
        a (word.sub (word.slu (word.of_Z 1) (word.of_Z 32)) (word.of_Z 1)) ).
-  Fail ZnWords.
-  assert 
-    (word.unsigned
-      (word.sub
-         (word.slu
-            (word.of_Z 1 : BasicC64Semantics.word) (word.of_Z 32))
-         (word.of_Z 1)) =
-       (Z.ones 32)) by trivial.
-  Fail ZnWords.
-  rewrite H; clear H.
   trivial.
+Qed.
+
+Lemma wrap_mul32_is_mul32 :
+  forall a b,
+    0 <= a < 2^32 ->
+    0 <= b < 2^32 -> word.wrap (a * b) = (a * b).
+Proof.
+  intros.
+  apply Zmod_small.
+  nia.
 Qed.
 
 Lemma mul32_ub :
@@ -80,28 +83,27 @@ Proof.
   intros.
   specialize (word.unsigned_range a).
   specialize (word.unsigned_range b).
-  intros.
   rewrite word.unsigned_mul.
-  (* TODO(harrisw): this may be proved by applying something like *
-  `Z.mul_lt_mono_r`. Suspect that this is in some library like
-  Coq.ZArith.ZArith, but can't confirm because Coq refs are
-  offline. *)
-  Fail nia.
-  Admitted.
+  rewrite wrap_mul32_is_mul32 by ZnWords.
+  specialize (Zmult_le_compat_r (word.unsigned a) (2^32 - 1) (word.unsigned b)).
+  specialize (Zmult_le_compat_l (word.unsigned b) (2^32 - 1) (2^32 - 1)).
+  ZnWords.
+Qed.
 
 Lemma mul_half_words :
   forall a b : BasicC64Semantics.word,
-    word.unsigned a < 2^32 -> word.unsigned b < 2^32 ->
+    word.unsigned a < 2^32 ->
+    word.unsigned b < 2^32 ->
     word.unsigned (word.mul a b) = word.unsigned a * word.unsigned b.
 Proof.
   intros.
-  Fail ZnWords.
-  Admitted.
+  rewrite word.unsigned_mul.
+  rewrite wrap_mul32_is_mul32; ZnWords.
+Qed.
 
 Lemma secp256k1_umul128_ok : program_logic_goal_for_function! secp256k1_umul128.
 Proof.
   repeat straightline.
-  (* TODO: clean up with repeated matching *)
   specialize (mask_is_mod a).
   specialize (mask_is_mod b).
   specialize (mask_is_mod ll).
@@ -120,6 +122,8 @@ Proof.
     (mul32_ub (word.sru a (word.of_Z 32)) (word.sru b (word.of_Z 32))).
   Time ZnWords.
 Qed.
+
+(* TODO(harrisw): DEP. Move to a separate module? *)
 
 (* Return the high word of the integer multiplication a * b. *)
 Definition mulhuu :=

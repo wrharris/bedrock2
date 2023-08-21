@@ -21,31 +21,28 @@ Local Notation "x += e" :=
           level 0, x ident, e custom bedrock_expr, only parsing).
 
 (* Return the high word of the integer multiplication a * b. *)
-Definition secp256k1_umul128 :=
-  func! (a, b) ~> (hi, low) {
-  (* func! (a, b) ~> (hi, low) { *)
+Definition full_mul :=
+  func! (a, b) ~> (low, high) {
       M = $1 << $32 - $1;
-      (* Casts to (uint32_t) in secp are implemented in bedrock2 using
-       * word.and. *)
       ll = (a & M) * (b & M);
       lh = (a & M) * (b >> $32);
       hl = (a >> $32) * (b & M);
       hh = (a >> $32) * (b >> $32);
-      mid34 = (ll >> $32) + (lh & M) + (hl & M);
-      hi = hh + (lh >> $32) + (hl >> $32) + (mid34 >> $32);
-      low = (mid34 << $32) + (ll & M)
+      second_halfword_w_oflow = (ll >> $32) + (lh & M) + (hl & M);
+      high = hh + (lh >> $32) + (hl >> $32) + (second_halfword_w_oflow >> $32);
+      low = (second_halfword_w_oflow << $32) + (ll & M)
     }.
 
-Local Instance spec_of_secp256k1 : spec_of "secp256k1_umul128" :=
-  fnspec! "secp256k1_umul128" a b ~> hi low,
+Local Instance spec_of_full_mul : spec_of "full_mul" :=
+  fnspec! "full_mul" a b ~> low high,
     { requires t m := True;
       ensures T M :=
         M = m /\ T = t /\
-          word.unsigned low + Z.shiftl (word.unsigned hi) 64 =
+          word.unsigned low + 2^64 * (word.unsigned high) =
             (word.unsigned a) * (word.unsigned b)
     }.
 
-Lemma mask_is_mod :
+Local Lemma mask_is_mod :
   forall a : BasicC64Semantics.word,
     word.unsigned
       (word.and
@@ -61,7 +58,7 @@ Proof.
   trivial.
 Qed.
 
-Lemma wrap_mul32_is_mul32 :
+Local Lemma wrap_mul32_is_mul32 :
   forall a b,
     0 <= a < 2^32 ->
     0 <= b < 2^32 -> word.wrap (a * b) = (a * b).
@@ -71,7 +68,7 @@ Proof.
   nia.
 Qed.
 
-Lemma mul32_ub :
+Local Lemma mul32_ub :
   forall a b : BasicC64Semantics.word,
     (word.unsigned a) < 2^32 ->
     (word.unsigned b) < 2^32 ->
@@ -87,7 +84,7 @@ Proof.
   ZnWords.
 Qed.
 
-Lemma mul_half_words :
+Local Lemma mul_half_words :
   forall a b : BasicC64Semantics.word,
     word.unsigned a < 2^32 ->
     word.unsigned b < 2^32 ->
@@ -98,7 +95,7 @@ Proof.
   rewrite wrap_mul32_is_mul32; ZnWords.
 Qed.
 
-Lemma secp256k1_umul128_ok : program_logic_goal_for_function! secp256k1_umul128.
+Lemma full_mul_ok : program_logic_goal_for_function! full_mul.
 Proof.
   repeat straightline.
   specialize (mask_is_mod a).
